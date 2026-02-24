@@ -24,22 +24,22 @@ COTURN_PROFILE=high-security docker compose up -d
 
 ## Running tests
 
-Recommended path (from host): uses the protocol-level probe (`tests/turn-probe.py`) for deterministic ACL/CVE checks.
+Uses a dedicated `test-runner` container (`python:3-alpine`) with the protocol-level probe (`tests/turn-probe.py`) for deterministic ACL/CVE checks.
 
 ```bash
-# Start coturn, then run tests from host
+# Start coturn, then run tests
 docker compose up -d
-bash tests/test-config.sh
+docker compose run --rm test-runner
 
 # Test a specific profile
 COTURN_PROFILE=minimal docker compose up -d
-COTURN_PROFILE=minimal bash tests/test-config.sh
+COTURN_PROFILE=minimal docker compose run --rm test-runner
 ```
 
-Optional fallback (inside coturn container): uses `turnutils_uclient` for smoke checks.
+Alternatively, run tests directly from the host (requires `python3` and `openssl`):
 
 ```bash
-docker compose exec coturn /opt/tests/test-config.sh
+bash tests/test-config.sh
 ```
 
 ### What the tests cover
