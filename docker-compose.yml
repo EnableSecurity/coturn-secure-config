@@ -1,0 +1,14 @@
+services:
+  coturn:
+    image: coturn/coturn:latest
+    restart: unless-stopped
+    ports:
+      - "3478:3478/udp"
+      - "3478:3478/tcp"
+      - "5349:5349/udp"
+      - "5349:5349/tcp"
+      - "49152-49252:49152-49252/udp"
+    volumes:
+      - ./configs/${COTURN_PROFILE:-recommended}.conf:/etc/coturn/turnserver.conf:ro
+      - ./certs/cert.pem:/etc/coturn/cert.pem:ro
+      - ./certs/privkey.pem:/etc/coturn/privkey.pem:ro
