@@ -114,6 +114,11 @@ fi
 # An attacker could bypass denied-peer-ip rules by using ::ffff:127.0.0.1
 # instead of 127.0.0.1. This is fixed in coturn 4.9.0 and also covered
 # by our denied-peer-ip=::ffff:0.0.0.0-::ffff:255.255.255.255 rule.
+# Note: turnutils_uclient connects over IPv4, so coturn rejects these at the
+# address family level (error 440) before reaching denied-peer-ip checks.
+# A proper CVE-2026-27624 test would need to craft the ::ffff: address at the
+# STUN protocol level within an IPv4 allocation. These tests still verify that
+# the bypass doesn't work, just not via the denied-peer-ip path specifically.
 echo "Test 7: Relay to ::ffff:127.0.0.1 - IPv4-mapped IPv6 bypass (should be denied)"
 if turnutils_uclient -e "::ffff:127.0.0.1" -u "$USERNAME" -w "$PASSWORD" "$TURN_HOST" -p "$TURN_PORT" -n 1 2>/dev/null; then
     fail "Relay to ::ffff:127.0.0.1 was allowed (CVE-2026-27624 bypass)"
