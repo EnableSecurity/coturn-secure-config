@@ -85,7 +85,13 @@ fi
 # Test 5: TLS connectivity (recommended and high-security profiles)
 if [ "$PROFILE" = "recommended" ] || [ "$PROFILE" = "high-security" ]; then
     echo "Test 5: TLS TURN allocation"
-    if turnutils_uclient -S -e "$EXTERNAL_PEER" -r "$EXTERNAL_PEER_PORT" -u "$USERNAME" -w "$PASSWORD" "$TURN_HOST" -p 5349 -n 1 2>/dev/null; then
+    # high-security uses TLS 1.3 only (no-tlsv1_2), which requires TCP+TLS (-t)
+    # since DTLS 1.3 is not yet widely available
+    TLS_FLAGS="-S"
+    if [ "$PROFILE" = "high-security" ]; then
+        TLS_FLAGS="-S -t"
+    fi
+    if turnutils_uclient $TLS_FLAGS -e "$EXTERNAL_PEER" -r "$EXTERNAL_PEER_PORT" -u "$USERNAME" -w "$PASSWORD" "$TURN_HOST" -p 5349 -n 1 2>/dev/null; then
         pass "TLS TURN allocation succeeded"
     else
         fail "TLS TURN allocation failed"
