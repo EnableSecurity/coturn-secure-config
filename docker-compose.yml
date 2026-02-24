@@ -12,3 +12,4 @@ services:
       - ./configs/${COTURN_PROFILE:-recommended}.conf:/etc/coturn/turnserver.conf:ro
       - ./certs/cert.pem:/etc/coturn/cert.pem:ro
       - ./certs/privkey.pem:/etc/coturn/privkey.pem:ro
+      - ./tests:/opt/tests:ro
