@@ -24,25 +24,35 @@ COTURN_PROFILE=high-security docker compose up -d
 
 ## Running tests
 
-The test script runs inside the coturn container (which has `turnutils_uclient` available):
+Recommended path (from host): uses the protocol-level probe (`tests/turn-probe.py`) for deterministic ACL/CVE checks.
 
 ```bash
-# Start coturn, then run tests inside the container
+# Start coturn, then run tests from host
 docker compose up -d
-docker compose exec coturn /opt/tests/test-config.sh
+bash tests/test-config.sh
 
 # Test a specific profile
 COTURN_PROFILE=minimal docker compose up -d
-docker compose exec coturn bash -c 'COTURN_PROFILE=minimal TURN_HOST=127.0.0.1 /opt/tests/test-config.sh'
+COTURN_PROFILE=minimal bash tests/test-config.sh
+```
+
+Optional fallback (inside coturn container): uses `turnutils_uclient` for smoke checks.
+
+```bash
+docker compose exec coturn /opt/tests/test-config.sh
 ```
 
 ### What the tests cover
 
-- TURN allocation to an external peer (should succeed)
+- TURN allocation/permission to an external peer (should succeed)
 - Unauthenticated TURN allocation (should be denied)
 - Relay to loopback, RFC1918, and cloud metadata addresses (should be denied)
 - IPv4-mapped IPv6 bypass attempts, e.g. `::ffff:127.0.0.1` (CVE-2026-27624 vector, should be denied)
-- TLS connectivity (recommended and high-security profiles)
+- TLS connectivity smoke test (recommended and high-security profiles, when `turnutils_uclient` is available)
+
+`tests/test-config.sh` auto-selects backend:
+- Probe mode (`python3` + `tests/turn-probe.py`) for reliable ACL/CVE verification
+- `turnutils_uclient` fallback when probe prerequisites are unavailable
 
 ## Production adaptation
 
