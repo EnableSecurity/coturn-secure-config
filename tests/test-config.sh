@@ -5,11 +5,16 @@
 # 1) Probe-first (recommended): uses turn-probe.py + python3 for deterministic ACL checks.
 # 2) Fallback: uses turnutils_uclient where python probe is unavailable.
 #
-# Usage from host:
-#   bash tests/test-config.sh
+# Usage with docker compose (recommended):
+#   docker compose up -d
+#   docker compose run --rm test-runner
 #
-# Usage from coturn container:
-#   docker compose exec coturn /opt/tests/test-config.sh
+# Test a specific profile:
+#   COTURN_PROFILE=high-security docker compose up -d
+#   COTURN_PROFILE=high-security docker compose run --rm test-runner
+#
+# Usage from host (requires python3 and openssl):
+#   bash tests/test-config.sh
 
 set -euo pipefail
 
@@ -143,10 +148,20 @@ if [ "$HAS_PROBE" -eq 0 ] && [ "$HAS_UCLIENT" -eq 0 ]; then
     exit 2
 fi
 
+# high-security disables plain UDP/TCP; probe only works over plain UDP
+PLAIN_DISABLED=0
+if [ "$PROFILE" = "high-security" ]; then
+    PLAIN_DISABLED=1
+fi
+
 echo "Testing coturn config profile: $PROFILE"
 echo "Server: $TURN_HOST:$TURN_PORT"
 echo "External peer: $EXTERNAL_PEER:$EXTERNAL_PEER_PORT"
-if [ "$HAS_PROBE" -eq 1 ]; then
+if [ "$PLAIN_DISABLED" -eq 1 ]; then
+    echo "Backend: plain transport disabled (TLS-only profile)"
+    echo "Waiting for server readiness..."
+    sleep 3
+elif [ "$HAS_PROBE" -eq 1 ]; then
     echo "Backend: protocol probe ($PROBE_SCRIPT)"
     echo "Waiting for TURN readiness (probe check)..."
     if wait_for_probe_backend 20; then
@@ -159,6 +174,12 @@ else
     echo "Backend: turnutils_uclient fallback"
 fi
 echo "---"
+
+# Tests 1-9 require plain UDP transport
+if [ "$PLAIN_DISABLED" -eq 1 ]; then
+    skip "Tests 1-9: plain transport disabled in $PROFILE profile (TLS-only)"
+    SKIP=$((SKIP + 8))  # count remaining 8 skips
+else
 
 # Test 1: Basic TURN allocation + permission to external peer should succeed
 echo "Test 1: TURN allocation to external peer (should succeed)"
@@ -285,6 +306,8 @@ else
     skip "IPv4-mapped IPv6 bypass checks (probe unavailable; turnutils cannot verify these reliably)"
     skip "IPv4-mapped IPv6 bypass checks (probe unavailable; turnutils cannot verify these reliably)"
 fi
+
+fi  # end PLAIN_DISABLED check
 
 # Test 10: TLS connectivity (recommended and high-security profiles)
 if [ "$PROFILE" = "recommended" ] || [ "$PROFILE" = "high-security" ]; then

@@ -106,11 +106,13 @@ def error_code(attrs: dict[int, bytes]) -> int:
 
 def add_message_integrity(packet_without_mi: bytes, key: bytes) -> bytes:
     # MI attribute is always 24 bytes total (type+len+20-byte SHA1)
+    # Per RFC 5389 s15.4: length field in header is adjusted to point to MI
+    # before computing HMAC, and the final packet keeps this updated length.
     mutable = bytearray(packet_without_mi)
     cur_len = struct.unpack("!H", mutable[2:4])[0]
     struct.pack_into("!H", mutable, 2, cur_len + 24)
     digest = hmac.new(key, bytes(mutable), hashlib.sha1).digest()
-    return packet_without_mi + stun_attr(A_MESSAGE_INTEGRITY, digest)
+    return bytes(mutable) + stun_attr(A_MESSAGE_INTEGRITY, digest)
 
 
 def build_request(method: int, tid: bytes, attrs: list[tuple[int, bytes]], auth: TurnAuth | None = None) -> bytes:

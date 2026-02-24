@@ -16,6 +16,25 @@ services:
     networks:
       - turnnet
 
+  test-runner:
+    image: python:3-alpine
+    depends_on:
+      - coturn
+    volumes:
+      - ./tests:/opt/tests:ro
+    environment:
+      - TURN_HOST=coturn
+      - TURN_PORT=3478
+      - TURN_SECRET=testing-secret-do-not-use-in-production
+      - COTURN_PROFILE=${COTURN_PROFILE:-recommended}
+      - EXTERNAL_PEER=8.8.8.8
+      - EXTERNAL_PEER_PORT=19302
+    entrypoint: ["sh", "-c", "apk add --no-cache bash openssl >/dev/null 2>&1 && bash /opt/tests/test-config.sh"]
+    networks:
+      - turnnet
+    profiles:
+      - test
+
 networks:
   turnnet:
     enable_ipv6: true
