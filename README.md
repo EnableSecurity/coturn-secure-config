@@ -20,18 +20,29 @@ COTURN_PROFILE=high-security docker compose up -d
 
 - **`minimal`** - Bare minimum for production: authentication, basic denied-peer-ip rules, rate limiting.
 - **`recommended`** - Full production config: TLS, comprehensive IANA special-purpose IP blocking, protocol hardening, monitoring. This is the default.
-- **`high-security`** - Maximum restrictions: allowlist-only peer access, TLS 1.3 only, aggressive rate limits. For sensitive deployments.
+- **`high-security`** - Maximum restrictions: allowlist-only peer access, TLS 1.3 only, tighter rate limits. For sensitive deployments.
 
 ## Running tests
 
+The test script runs inside the coturn container (which has `turnutils_uclient` available):
+
 ```bash
-# Requires turnutils_uclient (ships with coturn)
-# Make sure coturn is running first
-./tests/test-config.sh
+# Start coturn, then run tests inside the container
+docker compose up -d
+docker compose exec coturn /opt/tests/test-config.sh
 
 # Test a specific profile
-COTURN_PROFILE=minimal ./tests/test-config.sh
+COTURN_PROFILE=minimal docker compose up -d
+docker compose exec coturn bash -c 'COTURN_PROFILE=minimal TURN_HOST=127.0.0.1 /opt/tests/test-config.sh'
 ```
+
+### What the tests cover
+
+- TURN allocation to an external peer (should succeed)
+- Unauthenticated TURN allocation (should be denied)
+- Relay to loopback, RFC1918, and cloud metadata addresses (should be denied)
+- IPv4-mapped IPv6 bypass attempts, e.g. `::ffff:127.0.0.1` (CVE-2026-27624 vector, should be denied)
+- TLS connectivity (recommended and high-security profiles)
 
 ## Production adaptation
 
