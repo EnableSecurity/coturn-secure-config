@@ -14,6 +14,7 @@ docker compose up -d
 # Or choose a specific profile
 COTURN_PROFILE=minimal docker compose up -d
 COTURN_PROFILE=high-security docker compose up -d
+COTURN_PROFILE=insecure docker compose up -d  # negative test profile
 ```
 
 ## Configuration profiles
@@ -21,6 +22,7 @@ COTURN_PROFILE=high-security docker compose up -d
 - **`minimal`** - Bare minimum for production: authentication, basic denied-peer-ip rules, rate limiting.
 - **`recommended`** - Full production config: TLS, comprehensive IANA special-purpose IP blocking, protocol hardening, monitoring. This is the default.
 - **`high-security`** - Maximum restrictions: allowlist-only peer access, TLS 1.3 only, tighter rate limits. For sensitive deployments.
+- **`insecure`** - Intentionally unsafe config for negative testing only. Expected to fail security checks.
 
 ## Running tests
 
@@ -34,6 +36,10 @@ docker compose run --rm test-runner
 # Test a specific profile
 COTURN_PROFILE=minimal docker compose up -d
 COTURN_PROFILE=minimal docker compose run --rm test-runner
+
+# Negative test: this should FAIL security checks
+COTURN_PROFILE=insecure docker compose up -d
+COTURN_PROFILE=insecure docker compose run --rm test-runner
 ```
 
 ### What the tests cover
