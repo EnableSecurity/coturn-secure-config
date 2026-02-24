@@ -4,6 +4,7 @@
 Supports:
 - unauthenticated Allocate checks
 - authenticated Allocate + CreatePermission checks (including ::ffff: IPv4-mapped IPv6 peers)
+- TLS transport (TURN over TCP+TLS)
 """
 
 from __future__ import annotations
@@ -15,6 +16,7 @@ import hmac
 import ipaddress
 import os
 import socket
+import ssl
 import struct
 import sys
 import time
@@ -146,12 +148,13 @@ def xor_peer_value(ip: ipaddress._BaseAddress, port: int, tid: bytes) -> bytes:
     return struct.pack("!BBH", 0, FAM_V6, xport) + xip
 
 
-def make_socket(host: str, port: int, timeout: float) -> socket.socket:
-    infos = socket.getaddrinfo(host, port, type=socket.SOCK_DGRAM)
+def make_socket(host: str, port: int, timeout: float, *, tls: bool = False) -> socket.socket:
+    sock_type = socket.SOCK_STREAM if tls else socket.SOCK_DGRAM
+    infos = socket.getaddrinfo(host, port, type=sock_type)
     if not infos:
         raise ProbeError(f"could not resolve host {host}")
     # Prefer IPv4 first in dual-stack environments for consistent behavior
-    # with common coturn deployments and host-published Docker ports.
+    # with common coturn deployments and Docker networking.
     infos.sort(key=lambda i: 0 if i[0] == socket.AF_INET else 1)
     last_error: OSError | None = None
     for af, stype, proto, _, sockaddr in infos:
@@ -159,16 +162,41 @@ def make_socket(host: str, port: int, timeout: float) -> socket.socket:
             s = socket.socket(af, stype, proto)
             s.settimeout(timeout)
             s.connect(sockaddr)
+            if tls:
+                ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+                ctx.check_hostname = False
+                ctx.verify_mode = ssl.CERT_NONE
+                s = ctx.wrap_socket(s, server_hostname=host)
             return s
         except OSError as exc:
             last_error = exc
     if last_error is not None:
         raise last_error
-    raise ProbeError(f"could not open UDP socket to {host}:{port}")
+    raise ProbeError(f"could not connect to {host}:{port}")
+
+
+def _recv_stun_tcp(sock: socket.socket) -> bytes:
+    """Read a complete STUN message from a TCP/TLS stream."""
+    hdr = b""
+    while len(hdr) < HDR_LEN:
+        chunk = sock.recv(HDR_LEN - len(hdr))
+        if not chunk:
+            raise ProbeError("connection closed while reading STUN header")
+        hdr += chunk
+    body_len = struct.unpack("!H", hdr[2:4])[0]
+    body = b""
+    while len(body) < body_len:
+        chunk = sock.recv(body_len - len(body))
+        if not chunk:
+            raise ProbeError("connection closed while reading STUN body")
+        body += chunk
+    return hdr + body
 
 
 def send_recv(sock: socket.socket, packet: bytes) -> bytes:
-    sock.send(packet)
+    sock.sendall(packet)
+    if sock.type == socket.SOCK_STREAM:
+        return _recv_stun_tcp(sock)
     return sock.recv(8192)
 
 
@@ -244,7 +272,7 @@ def create_permission_with_auth(
 
 
 def mode_unauth_allocate(args: argparse.Namespace) -> int:
-    sock = make_socket(args.host, args.port, args.timeout)
+    sock = make_socket(args.host, args.port, args.timeout, tls=getattr(args, "tls", False))
     try:
         attrs = [(A_REQUESTED_TRANSPORT, struct.pack("!I", 17 << 24))]
         pkt = build_request(ALLOCATE_REQ, txid(), attrs, auth=None)
@@ -276,7 +304,7 @@ def mode_create_permission(args: argparse.Namespace) -> int:
 
     auth = TurnAuth(username=args.username, password=args.password)
 
-    sock = make_socket(args.host, args.port, args.timeout)
+    sock = make_socket(args.host, args.port, args.timeout, tls=getattr(args, "tls", False))
     try:
         challenge = request_nonce_realm(sock, alloc_family)
         auth.realm = challenge.realm
@@ -319,6 +347,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     p_ua = sub.add_parser("unauth-allocate", help="Check unauthenticated ALLOCATE behavior")
     p_ua.add_argument("--host", required=True)
     p_ua.add_argument("--port", type=int, default=3478)
+    p_ua.add_argument("--tls", action="store_true", help="Use TCP+TLS transport")
     p_ua.add_argument("--expect", choices=["allow", "deny"], default="deny")
     p_ua.add_argument("--timeout", type=float, default=3.0)
     p_ua.set_defaults(func=mode_unauth_allocate)
@@ -326,6 +355,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     p_cp = sub.add_parser("create-permission", help="Check authenticated CreatePermission behavior")
     p_cp.add_argument("--host", required=True)
     p_cp.add_argument("--port", type=int, default=3478)
+    p_cp.add_argument("--tls", action="store_true", help="Use TCP+TLS transport")
     p_cp.add_argument("--username", required=True)
     p_cp.add_argument("--password", required=True)
     p_cp.add_argument("--peer", required=True)

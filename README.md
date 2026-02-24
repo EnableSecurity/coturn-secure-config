@@ -24,7 +24,7 @@ COTURN_PROFILE=high-security docker compose up -d
 
 ## Running tests
 
-Uses a dedicated `test-runner` container (`python:3-alpine`) with the protocol-level probe (`tests/turn-probe.py`) and `turnutils_uclient` for TLS checks.
+Uses a dedicated `test-runner` container (`python:3-alpine`) with the protocol-level probe (`tests/turn-probe.py`) for all checks including TLS.
 
 ```bash
 # Start coturn, then run tests
@@ -42,7 +42,7 @@ COTURN_PROFILE=minimal docker compose run --rm test-runner
 - Unauthenticated TURN allocation (should be denied)
 - Relay to loopback, RFC1918, and cloud metadata addresses (should be denied)
 - IPv4-mapped IPv6 bypass attempts, e.g. `::ffff:127.0.0.1` (CVE-2026-27624 vector, should be denied)
-- TLS connectivity (recommended and high-security profiles, via `turnutils_uclient`)
+- TLS connectivity (recommended and high-security profiles)
 
 ## Production adaptation
 
