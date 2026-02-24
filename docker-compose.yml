@@ -13,3 +13,13 @@ services:
       - ./certs/cert.pem:/etc/coturn/cert.pem:ro
       - ./certs/privkey.pem:/etc/coturn/privkey.pem:ro
       - ./tests:/opt/tests:ro
+    networks:
+      - turnnet
+
+networks:
+  turnnet:
+    enable_ipv6: true
+    ipam:
+      config:
+        - subnet: 172.28.0.0/16
+        - subnet: fd00:dead:beef::/48
