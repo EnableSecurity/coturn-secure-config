@@ -1,0 +1,44 @@
+services:
+  coturn:
+    image: coturn/coturn:latest
+    restart: unless-stopped
+    ports:
+      - "3478:3478/udp"
+      - "3478:3478/tcp"
+      - "5349:5349/udp"
+      - "5349:5349/tcp"
+      - "49152-49252:49152-49252/udp"
+    volumes:
+      - ./configs/${COTURN_PROFILE:-recommended}.conf:/etc/coturn/turnserver.conf:ro
+      - ./certs/cert.pem:/etc/coturn/cert.pem:ro
+      - ./certs/privkey.pem:/etc/coturn/privkey.pem:ro
+      - ./tests:/opt/tests:ro
+    networks:
+      - turnnet
+
+  test-runner:
+    image: python:3-alpine
+    depends_on:
+      - coturn
+    volumes:
+      - ./tests:/opt/tests:ro
+    environment:
+      - TURN_HOST=coturn
+      - TURN_PORT=3478
+      - TURN_SECRET=testing-secret-do-not-use-in-production
+      - COTURN_PROFILE=${COTURN_PROFILE:-recommended}
+      - EXTERNAL_PEER=8.8.8.8
+      - EXTERNAL_PEER_PORT=19302
+    entrypoint: ["sh", "-c", "apk add --no-cache bash >/dev/null 2>&1 && bash /opt/tests/test-config.sh"]
+    networks:
+      - turnnet
+    profiles:
+      - test
+
+networks:
+  turnnet:
+    enable_ipv6: true
+    ipam:
+      config:
+        - subnet: 172.28.0.0/16
+        - subnet: fd00:dead:beef::/48
