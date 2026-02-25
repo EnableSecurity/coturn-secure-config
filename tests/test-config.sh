@@ -22,7 +22,6 @@ TURN_SECRET="${TURN_SECRET:-testing-secret-do-not-use-in-production}"
 TURN_USER="${TURN_USER:-test}"
 PROFILE="${COTURN_PROFILE:-recommended}"
 
-# External peer for allocation tests (must not be in denied-peer-ip ranges)
 EXTERNAL_PEER="${EXTERNAL_PEER:-8.8.8.8}"
 EXTERNAL_PEER_PORT="${EXTERNAL_PEER_PORT:-19302}"
 
@@ -46,210 +45,117 @@ fi
 
 # Generate TURN credential (HMAC-based as per RFC 5389 / use-auth-secret)
 generate_credential() {
-    local user="$1"
-    local secret="$2"
-
-    if command -v openssl >/dev/null 2>&1; then
-        local timestamp username password
-        timestamp=$(($(date +%s) + 86400))
-        username="${timestamp}:${user}"
-        password=$(echo -n "$username" | openssl dgst -sha1 -hmac "$secret" -binary | base64)
-        echo "$username" "$password"
-        return 0
-    fi
-
-    python3 - "$user" "$secret" <<'PY'
+    python3 - "$1" "$2" <<'PY'
 import base64, hashlib, hmac, sys, time
-user = sys.argv[1]
-secret = sys.argv[2].encode("utf-8")
+user, secret = sys.argv[1], sys.argv[2].encode("utf-8")
 username = f"{int(time.time()) + 86400}:{user}"
 password = base64.b64encode(hmac.new(secret, username.encode("utf-8"), hashlib.sha1).digest()).decode("ascii")
 print(username, password)
 PY
 }
 
-pass() {
-    echo "  PASS: $1"
-    PASS=$((PASS + 1))
-}
+pass() { echo "  PASS: $1"; PASS=$((PASS + 1)); }
+fail() { echo "  FAIL: $1"; FAIL=$((FAIL + 1)); }
+skip() { echo "  SKIP: $1"; SKIP=$((SKIP + 1)); }
 
-fail() {
-    echo "  FAIL: $1"
-    FAIL=$((FAIL + 1))
-}
-
-skip() {
-    echo "  SKIP: $1"
-    SKIP=$((SKIP + 1))
-}
-
-run_probe_create_permission() {
-    local peer="$1"
-    local expect="$2"
-    local allocation_family="$3"
-    local peer_port="$4"
-    local extra_flags="${5:-}"
-
+run_probe() {
     python3 "$PROBE_SCRIPT" create-permission \
-        --host "$TURN_HOST" \
-        --port "$TURN_PORT" \
-        --username "$USERNAME" \
-        --password "$PASSWORD" \
-        --peer "$peer" \
-        --peer-port "$peer_port" \
-        --expect "$expect" \
-        --allocation-family "$allocation_family" \
-        $extra_flags >/dev/null
+        --host "$TURN_HOST" --port "$TURN_PORT" \
+        --username "$USERNAME" --password "$PASSWORD" \
+        --peer "$1" --peer-port "$2" \
+        --expect "$3" --allocation-family "$4" \
+        $PROBE_FLAGS >/dev/null
 }
 
-run_probe_unauth_allocate() {
-    local expect="$1"
-    local extra_flags="${2:-}"
+run_probe_unauth() {
     python3 "$PROBE_SCRIPT" unauth-allocate \
-        --host "$TURN_HOST" \
-        --port "$TURN_PORT" \
-        --expect "$expect" \
-        $extra_flags >/dev/null
+        --host "$TURN_HOST" --port "$TURN_PORT" \
+        --expect "$1" $PROBE_FLAGS >/dev/null
 }
 
 wait_for_turn() {
-    local attempts="${1:-20}"
-    local extra_flags="${2:-}"
     local i
-    for i in $(seq 1 "$attempts"); do
-        if run_probe_unauth_allocate deny "$extra_flags" >/dev/null 2>&1; then
-            return 0
-        fi
+    for i in $(seq 1 20); do
+        if run_probe_unauth deny >/dev/null 2>&1; then return 0; fi
         sleep 1
     done
     return 1
 }
 
 if ! read -r USERNAME PASSWORD <<< "$(generate_credential "$TURN_USER" "$TURN_SECRET")"; then
-    echo "ERROR: could not generate TURN credentials (need openssl or python3)"
+    echo "ERROR: could not generate TURN credentials"
     exit 2
 fi
 
-# high-security disables plain UDP/TCP
-PLAIN_DISABLED=0
+# high-security disables plain UDP/TCP, must use TLS
+PROBE_FLAGS=""
 if [ "$PROFILE" = "high-security" ]; then
-    PLAIN_DISABLED=1
+    TURN_PORT="$TURN_TLS_PORT"
+    PROBE_FLAGS="--tls"
 fi
 
 echo "Testing coturn config profile: $PROFILE"
 echo "Server: $TURN_HOST:$TURN_PORT (TLS: $TURN_TLS_PORT)"
 echo "External peer: $EXTERNAL_PEER:$EXTERNAL_PEER_PORT"
+echo "Waiting for TURN readiness..."
 
-if [ "$PLAIN_DISABLED" -eq 1 ]; then
-    echo "Waiting for TURN TLS readiness..."
-    TURN_PORT="$TURN_TLS_PORT"
-    if wait_for_turn 20 "--tls"; then
-        echo "TURN (TLS) is ready."
-    else
-        echo "ERROR: could not reach TURN TLS at $TURN_HOST:$TURN_TLS_PORT"
-        exit 2
-    fi
+if wait_for_turn; then
+    echo "TURN is ready."
 else
-    echo "Waiting for TURN readiness..."
-    if wait_for_turn 20; then
-        echo "TURN is ready."
-    else
-        echo "ERROR: could not reach TURN at $TURN_HOST:$TURN_PORT"
-        exit 2
-    fi
+    echo "ERROR: could not reach TURN at $TURN_HOST:$TURN_PORT"
+    exit 2
 fi
 echo "---"
 
-# Determine probe flags for this profile
-PROBE_FLAGS=""
-if [ "$PLAIN_DISABLED" -eq 1 ]; then
-    PROBE_FLAGS="--tls"
-fi
+# --- Test definitions ---
+# Format: peer|port|expect|family|label
+TESTS=(
+    "$EXTERNAL_PEER|$EXTERNAL_PEER_PORT|allow|ipv4|External peer allocation"
+    "127.0.0.1|80|deny|ipv4|Relay to loopback"
+    "10.0.0.1|80|deny|ipv4|Relay to RFC1918 10.x"
+    "192.168.1.1|80|deny|ipv4|Relay to RFC1918 192.168.x"
+    "169.254.169.254|80|deny|ipv4|Relay to cloud metadata"
+    "::ffff:127.0.0.1|80|deny|ipv6|IPv4-mapped loopback (CVE-2026-27624)"
+    "::ffff:10.0.0.1|80|deny|ipv6|IPv4-mapped RFC1918 (CVE-2026-27624)"
+    "::ffff:169.254.169.254|80|deny|ipv6|IPv4-mapped metadata (CVE-2026-27624)"
+)
 
-# Test 1: Basic TURN allocation + permission to external peer should succeed
-echo "Test 1: TURN allocation to external peer (should succeed)"
-if run_probe_create_permission "$EXTERNAL_PEER" allow ipv4 "$EXTERNAL_PEER_PORT" "$PROBE_FLAGS"; then
-    pass "Allocation/permission to external peer accepted"
-else
-    fail "Allocation/permission to external peer denied (should be allowed)"
-fi
+N=0
+for test in "${TESTS[@]}"; do
+    IFS='|' read -r peer port expect family label <<< "$test"
+    N=$((N + 1))
+    echo "Test $N: $label (should $expect)"
+    if run_probe "$peer" "$port" "$expect" "$family"; then
+        pass "$label"
+    else
+        fail "$label"
+    fi
+done
 
-# Test 2: Unauthenticated TURN allocation should be denied
-echo "Test 2: Unauthenticated TURN allocation (should be denied)"
-if run_probe_unauth_allocate deny "$PROBE_FLAGS"; then
-    pass "Unauthenticated allocation correctly denied"
+# Unauthenticated allocation check
+N=$((N + 1))
+echo "Test $N: Unauthenticated allocation (should deny)"
+if run_probe_unauth deny; then
+    pass "Unauthenticated allocation denied"
 else
     fail "Unauthenticated allocation was allowed"
 fi
 
-# Test 3: Relay to loopback should be denied
-echo "Test 3: Relay to 127.0.0.1 (should be denied)"
-if run_probe_create_permission 127.0.0.1 deny ipv4 80 "$PROBE_FLAGS"; then
-    pass "Relay to 127.0.0.1 correctly denied"
-else
-    fail "Relay to 127.0.0.1 was allowed"
-fi
-
-# Test 4: Relay to RFC1918 10.x should be denied
-echo "Test 4: Relay to 10.0.0.1 (should be denied)"
-if run_probe_create_permission 10.0.0.1 deny ipv4 80 "$PROBE_FLAGS"; then
-    pass "Relay to 10.0.0.1 correctly denied"
-else
-    fail "Relay to 10.0.0.1 was allowed"
-fi
-
-# Test 5: Relay to RFC1918 192.168.x should be denied
-echo "Test 5: Relay to 192.168.1.1 (should be denied)"
-if run_probe_create_permission 192.168.1.1 deny ipv4 80 "$PROBE_FLAGS"; then
-    pass "Relay to 192.168.1.1 correctly denied"
-else
-    fail "Relay to 192.168.1.1 was allowed"
-fi
-
-# Test 6: Relay to cloud metadata endpoint should be denied
-echo "Test 6: Relay to 169.254.169.254 (should be denied)"
-if run_probe_create_permission 169.254.169.254 deny ipv4 80 "$PROBE_FLAGS"; then
-    pass "Relay to 169.254.169.254 correctly denied"
-else
-    fail "Relay to 169.254.169.254 was allowed"
-fi
-
-# Test 7-9: IPv4-mapped IPv6 bypass checks (CVE-2026-27624 vector)
-echo "Test 7: Relay to ::ffff:127.0.0.1 (should be denied)"
-if run_probe_create_permission "::ffff:127.0.0.1" deny ipv6 80 "$PROBE_FLAGS"; then
-    pass "Relay to ::ffff:127.0.0.1 correctly denied"
-else
-    fail "Relay to ::ffff:127.0.0.1 was allowed (CVE-2026-27624 bypass)"
-fi
-
-echo "Test 8: Relay to ::ffff:10.0.0.1 (should be denied)"
-if run_probe_create_permission "::ffff:10.0.0.1" deny ipv6 80 "$PROBE_FLAGS"; then
-    pass "Relay to ::ffff:10.0.0.1 correctly denied"
-else
-    fail "Relay to ::ffff:10.0.0.1 was allowed (CVE-2026-27624 bypass)"
-fi
-
-echo "Test 9: Relay to ::ffff:169.254.169.254 (should be denied)"
-if run_probe_create_permission "::ffff:169.254.169.254" deny ipv6 80 "$PROBE_FLAGS"; then
-    pass "Relay to ::ffff:169.254.169.254 correctly denied"
-else
-    fail "Relay to ::ffff:169.254.169.254 was allowed (CVE-2026-27624 bypass)"
-fi
-
-# Test 10: TLS connectivity (recommended and high-security profiles)
+# TLS connectivity (recommended and high-security profiles)
+N=$((N + 1))
 if [ "$PROFILE" = "recommended" ] || [ "$PROFILE" = "high-security" ]; then
-    echo "Test 10: TLS TURN allocation"
+    echo "Test $N: TLS TURN allocation"
     if python3 "$PROBE_SCRIPT" create-permission \
         --host "$TURN_HOST" --port "$TURN_TLS_PORT" --tls \
         --username "$USERNAME" --password "$PASSWORD" \
         --peer "$EXTERNAL_PEER" --peer-port "$EXTERNAL_PEER_PORT" \
         --expect allow --allocation-family ipv4 >/dev/null; then
-        pass "TLS TURN allocation succeeded"
+        pass "TLS TURN allocation"
     else
-        fail "TLS TURN allocation failed"
+        fail "TLS TURN allocation"
     fi
 else
-    skip "TLS test (not applicable for $PROFILE profile)"
+    skip "TLS test (not applicable for $PROFILE)"
 fi
 
 echo "---"
