@@ -46,6 +46,7 @@ COTURN_PROFILE=insecure docker compose run --rm test-runner
 
 - TURN allocation and CreatePermission to an external peer (should succeed)
 - Unauthenticated TURN allocation (should be denied)
+- Unauthenticated UDP allocation bursts (should be rate-limited where UDP is enabled)
 - Relay to loopback, RFC1918, and cloud metadata addresses (should be denied)
 - IPv4-mapped IPv6 bypass attempts, e.g. `::ffff:127.0.0.1` (CVE-2026-27624 vector, should be denied)
 - TLS connectivity (recommended and high-security profiles)
