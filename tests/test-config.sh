@@ -73,6 +73,12 @@ run_probe_unauth() {
         --expect "$1" $PROBE_FLAGS >/dev/null
 }
 
+run_probe_unauth_ratelimit() {
+    python3 "$PROBE_SCRIPT" unauth-allocate-rate-limit \
+        --host "$TURN_HOST" --port "$TURN_PORT" \
+        --expect limited --requests 40 --max-responses 15 >/dev/null
+}
+
 wait_for_turn() {
     local i
     for i in $(seq 1 20); do
@@ -139,6 +145,19 @@ if run_probe_unauth deny; then
     pass "Unauthenticated allocation denied"
 else
     fail "Unauthenticated allocation was allowed"
+fi
+
+# UDP unauthenticated ALLOCATE rate-limit check
+N=$((N + 1))
+if [ "$PROFILE" = "high-security" ]; then
+    skip "Unauthenticated UDP rate limit (plain UDP disabled)"
+else
+    echo "Test $N: Unauthenticated UDP allocation rate limit"
+    if run_probe_unauth_ratelimit; then
+        pass "Unauthenticated UDP allocation rate limit"
+    else
+        fail "Unauthenticated UDP allocation was not rate-limited"
+    fi
 fi
 
 # TLS connectivity (recommended and high-security profiles)

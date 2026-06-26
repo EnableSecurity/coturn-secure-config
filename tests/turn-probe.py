@@ -15,6 +15,7 @@ import hashlib
 import hmac
 import ipaddress
 import os
+import select
 import socket
 import ssl
 import struct
@@ -293,6 +294,48 @@ def mode_unauth_allocate(args: argparse.Namespace) -> int:
     return 0 if verdict_ok else 1
 
 
+def mode_unauth_allocate_rate_limit(args: argparse.Namespace) -> int:
+    sock = make_socket(args.host, args.port, args.timeout, tls=False)
+    requests: set[bytes] = set()
+    responses: set[bytes] = set()
+    attrs = [(A_REQUESTED_TRANSPORT, struct.pack("!I", 17 << 24))]
+
+    try:
+        for _ in range(args.requests):
+            tid = txid()
+            requests.add(tid)
+            sock.sendall(build_request(ALLOCATE_REQ, tid, attrs, auth=None))
+
+        deadline = time.monotonic() + args.window
+        while time.monotonic() < deadline and len(responses) < len(requests):
+            timeout = max(0.0, deadline - time.monotonic())
+            readable, _, _ = select.select([sock], [], [], min(timeout, 0.05))
+            if not readable:
+                continue
+            data = sock.recv(8192)
+            tid = data[8:20]
+            if tid not in requests or tid in responses:
+                continue
+            try:
+                method, _ = parse_stun(data)
+            except ProbeError:
+                continue
+            if method in (ALLOCATE_OK, ALLOCATE_ERR):
+                responses.add(tid)
+    finally:
+        sock.close()
+
+    limited = len(responses) <= args.max_responses and len(responses) < len(requests)
+    verdict_ok = (args.expect == "limited" and limited) or (args.expect == "unlimited" and not limited)
+
+    print(
+        f"RESULT mode=unauth-allocate-rate-limit host={args.host}:{args.port} "
+        f"requests={len(requests)} responses={len(responses)} max_responses={args.max_responses} "
+        f"expected={args.expect} verdict={'pass' if verdict_ok else 'fail'}"
+    )
+    return 0 if verdict_ok else 1
+
+
 def mode_create_permission(args: argparse.Namespace) -> int:
     peer = ipaddress.ip_address(args.peer)
 
@@ -351,6 +394,16 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     p_ua.add_argument("--expect", choices=["allow", "deny"], default="deny")
     p_ua.add_argument("--timeout", type=float, default=3.0)
     p_ua.set_defaults(func=mode_unauth_allocate)
+
+    p_rl = sub.add_parser("unauth-allocate-rate-limit", help="Check UDP unauthenticated ALLOCATE rate limiting")
+    p_rl.add_argument("--host", required=True)
+    p_rl.add_argument("--port", type=int, default=3478)
+    p_rl.add_argument("--expect", choices=["limited", "unlimited"], default="limited")
+    p_rl.add_argument("--requests", type=int, default=40)
+    p_rl.add_argument("--max-responses", type=int, default=15)
+    p_rl.add_argument("--window", type=float, default=1.0)
+    p_rl.add_argument("--timeout", type=float, default=3.0)
+    p_rl.set_defaults(func=mode_unauth_allocate_rate_limit)
 
     p_cp = sub.add_parser("create-permission", help="Check authenticated CreatePermission behavior")
     p_cp.add_argument("--host", required=True)
