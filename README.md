@@ -21,7 +21,7 @@ COTURN_PROFILE=insecure docker compose up -d  # negative test profile
 
 - **`minimal`** - Bare minimum for production: authentication, basic denied-peer-ip rules, amplification reduction, rate limiting.
 - **`recommended`** - Full production config: TLS, comprehensive IANA special-purpose IP blocking, protocol hardening, monitoring. This is the default.
-- **`high-security`** - Maximum restrictions: allowlist-only peer access, TLS 1.3 only, tighter rate limits. For sensitive deployments.
+- **`high-security`** - Maximum restrictions: allowlist-only peer access, TLS 1.3-only client connections, no UDP/DTLS listeners, and tighter rate limits. For sensitive deployments.
 - **`insecure`** - Intentionally unsafe config for negative testing only. Expected to fail security checks.
 
 ## Running tests
